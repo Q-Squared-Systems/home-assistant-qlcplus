@@ -276,6 +276,16 @@ class QLCPlusClient:
         """Control a VC Button, Slider, or Audio Trigger via the high-rate API."""
         await self._async_direct_command(str(widget_id), str(value))
 
+    async def async_get_widget_value(self, widget_id: int) -> int:
+        """Return the current value reported by a Virtual Console widget."""
+        result = await self._async_query("getWidgetStatus", str(widget_id))
+        if not result:
+            raise QLCPlusProtocolError(f"No status returned for widget {widget_id}")
+        try:
+            return int(result[-1])
+        except ValueError as err:
+            raise QLCPlusProtocolError(f"Invalid status for widget {widget_id}: {result!r}") from err
+
     async def async_set_function_status(self, function_id: int, state: bool) -> None:
         """Start or stop a Function."""
         await self._async_command("setFunctionStatus", str(function_id), "1" if state else "0")

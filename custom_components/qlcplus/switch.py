@@ -172,7 +172,7 @@ class QLCPlusWidgetSwitch(CoordinatorEntity[QLCPlusWidgetCoordinator], SwitchEnt
         return self.widget.value > 0 if self.widget else None
 
     async def async_turn_on(self, **kwargs: object) -> None:
-        await self.coordinator.async_set_widget_value(self.identity, 255)
+        await self.coordinator.async_set_widget_switch_state(self.identity, True)
 
     async def async_turn_off(self, **kwargs: object) -> None:
-        await self.coordinator.async_set_widget_value(self.identity, 0)
+        await self.coordinator.async_set_widget_switch_state(self.identity, False)

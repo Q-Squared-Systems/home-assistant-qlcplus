@@ -1,6 +1,6 @@
 # QLC+ for Home Assistant
 
-QLC+ is a Home Assistant custom integration for QLC+ 4.14.x. It uses QLC+'s built-in WebSocket Web API directly: no OSC bridge and no Virtual Console widgets are required. Each discovered QLC+ Function (Scene, Chaser, Collection, Script, and so on) is exposed as a switch named after the Function.
+QLC+ is a Home Assistant custom integration for QLC+ 4.14.x. It uses QLC+'s built-in WebSocket Web API directly: no OSC bridge is required. Compatible Virtual Console widgets are set up automatically, while regular QLC+ Functions are optional.
 
 ## Compatibility and setup
 
@@ -8,17 +8,23 @@ This integration targets QLC+ 4.14.x and requires its Web Access/WebSocket serve
 
 To install with HACS, add `https://github.com/Q-Squared-Systems/home-assistant-qlcplus` as a custom **Integration** repository, download **QLC+**, and restart Home Assistant. This repository contains exactly one integration under `custom_components/qlcplus`, as required by HACS. Releases use semantic version tags so HACS can offer normal updates.
 
-## How Functions work
+## Virtual Console widgets
+
+All compatible Virtual Console widgets are discovered automatically. Buttons and Audio Triggers are exposed as switches; Sliders are exposed as 0–255 number entities. Widget controls use QLC+'s direct high-rate WebSocket API, and pushed WebSocket feedback keeps their state current.
+
+VC **Toggle** buttons are supported as switches. QLC+ defines value `255` as a button press and `0` as a release; a Toggle button changes state on each press, so the integration checks `getWidgetStatus` before issuing a press. VC **Flash** buttons are momentary controls and are not supported as Home Assistant switches.
+
+## Optional Functions
 
 On setup and every shared refresh, the integration obtains QLC+'s Function list and resolves the numeric IDs internally. You use `House Red`, not `12`.
 
-Each Function is a switch. Turning one on/off sends QLC+'s `setFunctionStatus` command and immediately refreshes authoritative state. QLC+ 4's Function API has no documented Function-state push notification, so a single shared 15-second coordinator poll reads the Function list and status of all Functions. This makes changes from QLC+, MIDI, OSC, scripts, and other clients visible without every entity polling independently.
+Selected Functions are switches. Turning one on/off sends QLC+'s `setFunctionStatus` command. QLC+ pushes Function state events over the same WebSocket connection; the integration uses those for immediate feedback and retains a shared 15-second refresh as reconciliation.
 
 QLC+ does not expose a stable Function UUID. Entity identity is therefore based on server identity plus normalized Function type, name, and duplicate occurrence. Numeric-ID-only changes are transparent. Renaming a Function creates a new identity; duplicate type/name pairs are handled deterministically by occurrence and service calls by that name are rejected as ambiguous.
 
 ## Filtering
 
-Open **Configure** on the QLC+ integration to select individual Functions, Function types, and/or a name prefix. Leave all three filters blank to expose every Function. A Function matching any selected filter is exposed. Changing filters reloads the entry.
+Open **Configure** on the QLC+ integration to select individual Functions, Function types, and/or a name prefix. Regular Function entities are opt-in: with no filter, none are exposed. A Function matching any selected filter is exposed. Changing filters reloads the entry.
 
 ## Services
 

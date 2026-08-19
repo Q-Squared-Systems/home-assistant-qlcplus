@@ -54,3 +54,16 @@ class QLCPlusWidgetCoordinator(DataUpdateCoordinator[dict[str, QLCWidget]]):
         data = dict(self.data or {})
         data[identity] = replace(widget, value=value)
         self.async_set_updated_data(data)
+
+    async def async_set_widget_switch_state(self, identity: str, state: bool) -> None:
+        """Set a VC Toggle button by pressing it only when a toggle is needed."""
+        widget = self.get_widget(identity)
+        if widget is None:
+            raise ValueError("Virtual Console widget no longer exists")
+        current_value = await self.client.async_get_widget_value(widget.widget_id)
+        is_on = current_value > 0
+        if is_on == state:
+            return
+        # QLC+ Button value 0 is a release, not an off command. Toggle buttons
+        # change state on a press (255), in either direction.
+        await self.client.async_set_widget_value(widget.widget_id, 255)
