@@ -27,7 +27,9 @@ class QLCPlusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             host = user_input[CONF_HOST].strip()
-            port = user_input[CONF_PORT]
+            # NumberSelector may return a float (for example 9999.0), which is
+            # not a valid URI port when interpolated into the WebSocket URL.
+            port = int(user_input[CONF_PORT])
             await self.async_set_unique_id(f"{host.casefold()}:{port}")
             self._abort_if_unique_id_configured()
             client = QLCPlusClient(host, port, user_input[CONF_SSL])
@@ -39,7 +41,10 @@ class QLCPlusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             finally:
                 await client.async_disconnect()
             if not errors:
-                return self.async_create_entry(title=f"QLC+ ({host})", data={**user_input, CONF_HOST: host})
+                return self.async_create_entry(
+                    title=f"QLC+ ({host})",
+                    data={**user_input, CONF_HOST: host, CONF_PORT: port},
+                )
         schema = vol.Schema(
             {
                 vol.Required(CONF_HOST): str,

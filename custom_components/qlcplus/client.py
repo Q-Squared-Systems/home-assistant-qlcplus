@@ -35,9 +35,9 @@ class QLCPlusClient:
     Commands that change state do not produce a reply in the upstream server.
     """
 
-    def __init__(self, host: str, port: int, use_ssl: bool) -> None:
+    def __init__(self, host: str, port: int | float, use_ssl: bool) -> None:
         self.host = host
-        self.port = port
+        self.port = int(port)
         self.use_ssl = use_ssl
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
