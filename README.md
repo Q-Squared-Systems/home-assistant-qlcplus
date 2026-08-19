@@ -6,7 +6,7 @@ QLC+ is a Home Assistant custom integration for QLC+ 4.14.x. It uses QLC+'s buil
 
 This integration targets QLC+ 4.14.x and requires its Web Access/WebSocket server to be enabled (start QLC+ with `-w` / `--web`). The default endpoint is `ws://<qlc-host>:9999/qlcplusWS`; port `9999` is prefilled in the config flow. Configure the host, port, and optional SSL in **Settings → Devices & services → Add integration → QLC+**.
 
-To install with HACS, add `https://github.com/Q-Squared-Systems/home-assistant-qlcplus` as a custom **Integration** repository, download **QLC+**, and restart Home Assistant. This repository contains exactly one integration under `custom_components/qlcplus`, as required by HACS.
+To install with HACS, add `https://github.com/Q-Squared-Systems/home-assistant-qlcplus` as a custom **Integration** repository, download **QLC+**, and restart Home Assistant. This repository contains exactly one integration under `custom_components/qlcplus`, as required by HACS. Releases use semantic version tags so HACS can offer normal updates.
 
 ## How Functions work
 
