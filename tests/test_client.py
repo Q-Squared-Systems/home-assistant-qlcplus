@@ -52,6 +52,7 @@ async def test_connect_uses_websocket_specific_timeout(monkeypatch) -> None:
     async def ws_connect(self, url, **kwargs):
         captured["url"] = url
         captured["timeout"] = kwargs["timeout"]
+        captured["heartbeat"] = kwargs["heartbeat"]
         return FakeWebSocket()
 
     monkeypatch.setattr(aiohttp.ClientSession, "ws_connect", ws_connect)
@@ -59,6 +60,7 @@ async def test_connect_uses_websocket_specific_timeout(monkeypatch) -> None:
     assert captured["url"] == "ws://qlc.local:9999/qlcplusWS"
     assert isinstance(captured["timeout"], aiohttp.ClientWSTimeout)
     assert captured["timeout"].ws_receive == 10
+    assert captured["heartbeat"] == 30
     await client.async_disconnect()
 
 

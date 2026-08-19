@@ -61,11 +61,11 @@ class QLCPlusClient:
         try:
             self._session = aiohttp.ClientSession()
             # Home Assistant's aiohttp pins expect ClientWSTimeout here; passing
-            # ClientTimeout can fail during WebSocket setup/cleanup. Do not use
-            # heartbeat: QLC+ 4's embedded server does not document ping/pong
-            # support, and the coordinator's regular requests keep the socket live.
+            # ClientTimeout can fail during WebSocket setup/cleanup. The WebSocket
+            # heartbeat keeps an otherwise-idle persistent connection healthy.
             self._ws = await self._session.ws_connect(
                 self.url,
+                heartbeat=30,
                 timeout=aiohttp.ClientWSTimeout(ws_receive=_TIMEOUT, ws_close=_TIMEOUT),
             )
             self.last_error = None
