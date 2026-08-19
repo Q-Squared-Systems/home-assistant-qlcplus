@@ -14,6 +14,8 @@ All compatible Virtual Console widgets are discovered automatically. Buttons and
 
 New entities use a `QLC` name prefix, resulting in Home Assistant entity IDs such as `switch.qlc_house_red`. Home Assistant preserves existing entity IDs to avoid breaking dashboards and automations.
 
+The integration also creates a `binary_sensor` named **QLC Online**. It is on while Home Assistant has a successful coordinator update and an active QLC+ WebSocket connection.
+
 VC **Toggle** buttons are supported as switches. QLC+ defines value `255` as a button press and `0` as a release; a Toggle button changes state on each press, so the integration checks `getWidgetStatus` before issuing a press. VC **Flash** buttons are momentary controls and are not supported as Home Assistant switches.
 
 ## Optional Functions
