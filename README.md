@@ -12,6 +12,8 @@ To install with HACS, add `https://github.com/Q-Squared-Systems/home-assistant-q
 
 All compatible Virtual Console widgets are discovered automatically. Buttons and Audio Triggers are exposed as switches; Sliders are exposed as 0–255 number entities. Widget controls use QLC+'s direct high-rate WebSocket API, and pushed WebSocket feedback keeps their state current.
 
+New entities use a `QLC` name prefix, resulting in Home Assistant entity IDs such as `switch.qlc_house_red`. Home Assistant preserves existing entity IDs to avoid breaking dashboards and automations.
+
 VC **Toggle** buttons are supported as switches. QLC+ defines value `255` as a button press and `0` as a release; a Toggle button changes state on each press, so the integration checks `getWidgetStatus` before issuing a press. VC **Flash** buttons are momentary controls and are not supported as Home Assistant switches.
 
 ## Optional Functions

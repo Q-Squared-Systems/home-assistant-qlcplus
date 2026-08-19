@@ -117,7 +117,7 @@ class QLCPlusFunctionSwitch(CoordinatorEntity[QLCPlusCoordinator], SwitchEntity)
     @property
     def name(self) -> str:
         function = self.function
-        return function.name if function else self.identity
+        return f"QLC {function.name}" if function else f"QLC {self.identity}"
 
     @property
     def is_on(self) -> bool | None:
@@ -165,7 +165,7 @@ class QLCPlusWidgetSwitch(CoordinatorEntity[QLCPlusWidgetCoordinator], SwitchEnt
 
     @property
     def name(self) -> str:
-        return self.widget.name if self.widget else self.identity
+        return f"QLC {self.widget.name}" if self.widget else f"QLC {self.identity}"
 
     @property
     def is_on(self) -> bool | None:

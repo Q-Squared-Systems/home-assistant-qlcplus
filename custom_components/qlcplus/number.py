@@ -39,7 +39,7 @@ class QLCPlusWidgetSlider(CoordinatorEntity[QLCPlusWidgetCoordinator], NumberEnt
     @property
     def name(self) -> str:
         widget = self.coordinator.get_widget(self.identity)
-        return widget.name if widget else self.identity
+        return f"QLC {widget.name}" if widget else f"QLC {self.identity}"
 
     async def async_set_native_value(self, value: float) -> None:
         await self.coordinator.async_set_widget_value(self.identity, round(value))
