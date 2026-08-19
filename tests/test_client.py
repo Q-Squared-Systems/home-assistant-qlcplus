@@ -67,3 +67,4 @@ async def test_connect_uses_websocket_specific_timeout(monkeypatch) -> None:
 def test_url_normalizes_a_home_assistant_number_selector_float() -> None:
     client = QLCPlusClient("qlc.local", 9999.0, False)
     assert client.url == "ws://qlc.local:9999/qlcplusWS"
+    assert client.web_url == "http://qlc.local:9999"

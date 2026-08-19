@@ -53,6 +53,12 @@ class QLCPlusClient:
         scheme = "wss" if self.use_ssl else "ws"
         return f"{scheme}://{self.host}:{self.port}{WEBSOCKET_PATH}"
 
+    @property
+    def web_url(self) -> str:
+        """Return the browser URL for QLC+'s Web Interface."""
+        scheme = "https" if self.use_ssl else "http"
+        return f"{scheme}://{self.host}:{self.port}"
+
     async def async_connect(self) -> None:
         """Open the WebSocket if it is not already open."""
         if self.connected:

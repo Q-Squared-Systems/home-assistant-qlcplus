@@ -134,7 +134,7 @@ class QLCPlusFunctionSwitch(CoordinatorEntity[QLCPlusCoordinator], SwitchEntity)
             name=self._entry.title,
             manufacturer="QLC+",
             model="QLC+ 4 Web API",
-            configuration_url=self.coordinator.client.url,
+            configuration_url=self.coordinator.client.web_url,
         )
 
     async def async_turn_on(self, **kwargs: object) -> None:
