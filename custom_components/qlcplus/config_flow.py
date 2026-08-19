@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -13,6 +14,8 @@ from homeassistant.helpers import selector
 
 from .client import QLCPlusClient, QLCPlusError
 from .const import CONF_EXPOSED_FUNCTIONS, CONF_EXPOSED_TYPES, CONF_NAME_PREFIX, CONF_SSL, DEFAULT_PORT, DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class QLCPlusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -30,7 +33,8 @@ class QLCPlusConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             client = QLCPlusClient(host, port, user_input[CONF_SSL])
             try:
                 await client.async_get_functions()
-            except QLCPlusError:
+            except QLCPlusError as err:
+                _LOGGER.error("Unable to verify QLC+ WebSocket connection to %s:%s: %s", host, port, err)
                 errors["base"] = "cannot_connect"
             finally:
                 await client.async_disconnect()

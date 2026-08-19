@@ -60,12 +60,17 @@ class QLCPlusClient:
         await self.async_disconnect()
         try:
             self._session = aiohttp.ClientSession()
+            # Home Assistant's aiohttp pins expect ClientWSTimeout here; passing
+            # ClientTimeout can fail during WebSocket setup/cleanup. Do not use
+            # heartbeat: QLC+ 4's embedded server does not document ping/pong
+            # support, and the coordinator's regular requests keep the socket live.
             self._ws = await self._session.ws_connect(
-                self.url, heartbeat=30, timeout=aiohttp.ClientTimeout(total=_TIMEOUT)
+                self.url,
+                timeout=aiohttp.ClientWSTimeout(ws_receive=_TIMEOUT, ws_close=_TIMEOUT),
             )
             self.last_error = None
             _LOGGER.debug("Connected to QLC+ WebSocket at %s", self.url)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError, TypeError) as err:
             self.last_error = str(err)
             await self.async_disconnect()
             raise QLCPlusConnectionError(f"Unable to connect to {self.url}: {err}") from err
@@ -73,7 +78,10 @@ class QLCPlusClient:
     async def async_disconnect(self) -> None:
         """Close resources. Safe to call repeatedly."""
         if self._ws is not None:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except aiohttp.ClientError as err:
+                _LOGGER.debug("Error while closing QLC+ WebSocket: %s", err)
         self._ws = None
         if self._session is not None:
             await self._session.close()
