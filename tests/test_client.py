@@ -39,6 +39,29 @@ async def test_discovers_types_states_and_duplicate_names(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_discovers_all_functions_but_reads_only_filtered_statuses(monkeypatch) -> None:
+    client = QLCPlusClient("qlc.local", 9999, False)
+    queries = []
+
+    async def query(command, *args):
+        queries.append((command, *args))
+        replies = {
+            ("getFunctionsList",): ["12", "House Red", "13", "Worklight"],
+            ("getFunctionType", "12"): ["Scene"],
+            ("getFunctionType", "13"): ["Chaser"],
+            ("getFunctionStatus", "12"): ["Running"],
+        }
+        return replies[(command, *args)]
+
+    monkeypatch.setattr(client, "_async_query", query)
+    functions = await client.async_get_functions(lambda function: function.name == "House Red")
+
+    assert [(item.name, item.running) for item in functions] == [("House Red", True), ("Worklight", False)]
+    assert ("getFunctionStatus", "12") in queries
+    assert ("getFunctionStatus", "13") not in queries
+
+
+@pytest.mark.asyncio
 async def test_connect_uses_websocket_specific_timeout(monkeypatch) -> None:
     client = QLCPlusClient("qlc.local", 9999, False)
     captured = {}

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
+from collections.abc import Callable
+from dataclasses import replace
 import logging
 from typing import Final
 
@@ -147,8 +149,15 @@ class QLCPlusClient:
                 await self.async_disconnect()
                 raise QLCPlusConnectionError(f"QLC+ command {command} failed: {err}") from err
 
-    async def async_get_functions(self) -> list[QLCFunction]:
-        """Fetch all Functions, types and authoritative run states."""
+    async def async_get_functions(
+        self, status_filter: Callable[[QLCFunction], bool] | None = None
+    ) -> list[QLCFunction]:
+        """Fetch all Functions and types, and states selected by ``status_filter``.
+
+        QLC+ 4 returns names but not types in its Function list. Types must be
+        read to retain stable identities and apply Home Assistant's filters;
+        status reads, however, are only needed for exposed Functions.
+        """
         raw = await self._async_query("getFunctionsList")
         if len(raw) % 2:
             raise QLCPlusProtocolError("getFunctionsList reply has an odd number of fields")
@@ -162,10 +171,13 @@ class QLCPlusClient:
         seen: Counter[tuple[str, str]] = Counter()
         for function_id, name in pairs:
             function_type = (await self._async_query("getFunctionType", str(function_id)) or ["Undefined"])[0]
-            status = (await self._async_query("getFunctionStatus", str(function_id)) or ["Undefined"])[0]
             key = (function_type.casefold(), name.casefold())
             seen[key] += 1
-            discovered.append(QLCFunction(function_id, name, function_type, status == "Running", seen[key]))
+            function = QLCFunction(function_id, name, function_type, False, seen[key])
+            if status_filter is None or status_filter(function):
+                status = (await self._async_query("getFunctionStatus", str(function_id)) or ["Undefined"])[0]
+                function = replace(function, running=status == "Running")
+            discovered.append(function)
         return discovered
 
     async def async_get_function_status(self, function_id: int) -> bool:

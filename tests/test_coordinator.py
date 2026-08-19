@@ -16,6 +16,7 @@ class FakeConfigEntry:
     """Minimum config-entry contract consumed by DataUpdateCoordinator."""
 
     domain = "qlcplus"
+    options = {}
 
     def async_on_unload(self, callback) -> None:
         """No-op: tests do not start the Home Assistant lifecycle."""
@@ -29,7 +30,7 @@ async def test_changed_numeric_id_preserves_identity(tmp_path) -> None:
     class Client:
         calls = 0
 
-        async def async_get_functions(self):
+        async def async_get_functions(self, status_filter):
             self.calls += 1
             return [QLCFunction(12 if self.calls == 1 else 99, "House Red", "Scene", False)]
 
@@ -43,7 +44,7 @@ async def test_changed_numeric_id_preserves_identity(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_connection_failure_becomes_update_failed(tmp_path) -> None:
     class Client:
-        async def async_get_functions(self):
+        async def async_get_functions(self, status_filter):
             raise QLCPlusConnectionError("offline")
 
     coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), Client(), ENTRY)
@@ -82,7 +83,7 @@ async def test_full_scan_started_before_command_is_discarded(tmp_path) -> None:
     current = QLCFunction(12, "House Red", "Scene", True)
 
     class Client:
-        async def async_get_functions(self):
+        async def async_get_functions(self, status_filter):
             started.set()
             await release.wait()
             return [QLCFunction(12, "House Red", "Scene", False)]

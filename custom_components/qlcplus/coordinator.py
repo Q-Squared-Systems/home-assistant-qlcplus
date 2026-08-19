@@ -15,6 +15,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .client import QLCPlusClient, QLCPlusError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 from .models import QLCFunction
+from .const import CONF_EXPOSED_FUNCTIONS, CONF_EXPOSED_TYPES, CONF_NAME_PREFIX
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,12 +40,26 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         self._command_complete = asyncio.Event()
         self._command_complete.set()
 
+    def _is_exposed(self, function: QLCFunction) -> bool:
+        """Return whether this Function has a corresponding HA switch."""
+        options = self.config_entry.options
+        selected = set(options.get(CONF_EXPOSED_FUNCTIONS, []))
+        types = set(options.get(CONF_EXPOSED_TYPES, []))
+        prefix = options.get(CONF_NAME_PREFIX, "").strip().casefold()
+        if not selected and not types and not prefix:
+            return True
+        return (
+            function.identity in selected
+            or function.function_type in types
+            or (bool(prefix) and function.name.casefold().startswith(prefix))
+        )
+
     async def _async_update_data(self) -> dict[str, QLCFunction]:
         """Read a full QLC+ snapshot without overwriting a newer command state."""
         await self._command_complete.wait()
         generation = self._state_generation
         try:
-            functions = await self.client.async_get_functions()
+            functions = await self.client.async_get_functions(self._is_exposed)
         except QLCPlusError as err:
             raise UpdateFailed(str(err)) from err
         self.last_successful_communication = datetime.now().astimezone()
