@@ -1,5 +1,7 @@
 """Protocol parsing tests using a mocked QLC+ WebSocket client."""
 
+import asyncio
+
 import pytest
 import aiohttp
 
@@ -94,8 +96,9 @@ def test_url_normalizes_a_home_assistant_number_selector_float() -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_skips_unsolicited_function_event(monkeypatch) -> None:
+async def test_query_processes_unsolicited_function_event(monkeypatch) -> None:
     client = QLCPlusClient("qlc.local", 9999, False)
+    events = []
 
     class FakeWebSocket:
         closed = False
@@ -103,8 +106,13 @@ async def test_query_skips_unsolicited_function_event(monkeypatch) -> None:
         async def send_str(self, payload):
             assert payload == "QLC+API|getFunctionsList"
 
-        async def receive(self, timeout):
-            return replies.pop(0)
+        async def receive(self):
+            if replies:
+                return replies.pop(0)
+            await asyncio.Event().wait()
+
+        async def close(self):
+            self.closed = True
 
     replies = [
         aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, "FUNCTION|0|Running", ""),
@@ -115,5 +123,11 @@ async def test_query_skips_unsolicited_function_event(monkeypatch) -> None:
     async def connect():
         return None
 
+    async def handle_event(function_id, running):
+        events.append((function_id, running))
+
     monkeypatch.setattr(client, "async_connect", connect)
+    client.set_function_event_handler(handle_event)
     assert await client._async_query("getFunctionsList") == ["0", "House Red"]
+    assert events == [(0, True)]
+    await client.async_disconnect()

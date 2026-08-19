@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 DOMAIN = "qlcplus"
-PLATFORMS = ["switch"]
+PLATFORMS = ["switch", "number"]
 
 CONF_SSL = "ssl"
 CONF_PORT = "port"

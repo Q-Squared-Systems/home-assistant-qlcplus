@@ -30,3 +30,17 @@ class QLCFunction:
     def selector_key(self) -> str:
         """Human-readable, unambiguous option selector."""
         return f"{self.function_type}: {self.name} [{self.occurrence}]"
+
+
+@dataclass(frozen=True, slots=True)
+class QLCWidget:
+    """A Virtual Console widget exposed through QLC+'s WebSocket API."""
+
+    widget_id: int
+    name: str
+    widget_type: str
+    value: int
+
+    @property
+    def identity(self) -> str:
+        return f"{self.widget_type.casefold()}:{normalize(self.name)}:{self.widget_id}"

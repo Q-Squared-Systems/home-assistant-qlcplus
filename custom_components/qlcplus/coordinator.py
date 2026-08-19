@@ -35,6 +35,7 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
             config_entry=config_entry,
         )
         self.client = client
+        self.client.set_function_event_handler(self._async_handle_function_event)
         self.last_successful_communication: datetime | None = None
         self._discovery_listeners: list[Callable[[], None]] = []
         self._state_generation = 0
@@ -50,7 +51,7 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         types = set(options.get(CONF_EXPOSED_TYPES, []))
         prefix = options.get(CONF_NAME_PREFIX, "").strip().casefold()
         if not selected and not types and not prefix:
-            return True
+            return False
         return (
             function.identity in selected
             or function.function_type in types
@@ -99,6 +100,21 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
     def get_function(self, identity: str) -> QLCFunction | None:
         return (self.data or {}).get(identity)
 
+    async def _async_handle_function_event(self, function_id: int, running: bool) -> None:
+        """Apply QLC+'s pushed FUNCTION state event without waiting for a poll."""
+        data = dict(self.data or {})
+        for identity, function in data.items():
+            if function.function_id != function_id:
+                continue
+            self._state_generation += 1
+            self._pending_states.pop(identity, None)
+            if function.running != running:
+                data[identity] = replace(function, running=running)
+                self.last_successful_communication = datetime.now().astimezone()
+                self.async_set_updated_data(data)
+            return
+        _LOGGER.debug("Ignoring QLC+ FUNCTION event for unknown ID %s", function_id)
+
     async def async_set_function_state(self, identity: str, state: bool) -> None:
         """Command one Function and immediately update its Home Assistant state."""
         async with self._command_lock:
@@ -106,9 +122,8 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
             if function is None:
                 raise ValueError("Function no longer exists in the QLC+ project")
 
-            # Full scans query hundreds of Functions over time. Mark any scan
-            # already running as stale and keep new scans out until the command
-            # has been sent and this Function's state has been read back.
+            # Full scans query Functions over time. Mark any scan already
+            # running as stale and keep new scans out until the command is sent.
             self._command_complete.clear()
             self._state_generation += 1
             try:

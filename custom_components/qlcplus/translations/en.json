@@ -4,5 +4,5 @@
     "error": {"cannot_connect": "Unable to connect to the QLC+ WebSocket API."},
     "abort": {"already_configured": "This QLC+ server is already configured."}
   },
-  "options": {"step": {"init": {"title": "Function filtering", "description": "Leave every filter empty to expose all Functions. A Function is exposed when it matches any filter.", "data": {"exposed_functions": "Individual Functions", "exposed_types": "Function types", "name_prefix": "Name prefix"}}}}
+  "options": {"step": {"init": {"title": "Function filtering", "description": "Regular QLC+ Functions are opt-in. Select individual Functions, types, or a name prefix to expose matching entities.", "data": {"exposed_functions": "Individual Functions", "exposed_types": "Function types", "name_prefix": "Name prefix"}}}}
 }

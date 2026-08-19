@@ -16,6 +16,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import CONF_EXPOSED_FUNCTIONS, CONF_EXPOSED_TYPES, CONF_NAME_PREFIX, DOMAIN
 from .coordinator import QLCPlusCoordinator
 from .models import QLCFunction
+from .models import QLCWidget
+from .widget_coordinator import QLCPlusWidgetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -27,18 +29,14 @@ def _is_exposed(entry: ConfigEntry, function: QLCFunction) -> bool:
     types = set(options.get(CONF_EXPOSED_TYPES, []))
     prefix = options.get(CONF_NAME_PREFIX, "").strip().casefold()
     if not selected and not types and not prefix:
-        return True
+        return False
     return function.identity in selected or function.function_type in types or (bool(prefix) and function.name.casefold().startswith(prefix))
 
 
 def _has_active_filter(entry: ConfigEntry) -> bool:
     """Return whether entity selection has been explicitly restricted."""
     options = entry.options
-    return bool(
-        options.get(CONF_EXPOSED_FUNCTIONS)
-        or options.get(CONF_EXPOSED_TYPES)
-        or options.get(CONF_NAME_PREFIX, "").strip()
-    )
+    return True
 
 
 async def _async_cleanup_filtered_entities(
@@ -88,6 +86,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             async_add_entities(entities)
 
     add_new()
+    widget_coordinator: QLCPlusWidgetCoordinator = hass.data[DOMAIN][entry.entry_id].widget_coordinator
+    async_add_entities(
+        QLCPlusWidgetSwitch(widget_coordinator, entry, identity)
+        for identity, widget in (widget_coordinator.data or {}).items()
+        if widget.widget_type in {"Button", "Audio Triggers"}
+    )
     entry.async_on_unload(coordinator.async_add_discovery_listener(add_new))
 
 
@@ -142,3 +146,33 @@ class QLCPlusFunctionSwitch(CoordinatorEntity[QLCPlusCoordinator], SwitchEntity)
 
     async def async_turn_off(self, **kwargs: object) -> None:
         await self.coordinator.async_set_function_state(self.identity, False)
+
+
+class QLCPlusWidgetSwitch(CoordinatorEntity[QLCPlusWidgetCoordinator], SwitchEntity):
+    """A Virtual Console Button or Audio Trigger."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: QLCPlusWidgetCoordinator, entry: ConfigEntry, identity: str) -> None:
+        super().__init__(coordinator)
+        self.identity = identity
+        self._entry = entry
+        self._attr_unique_id = f"{entry.unique_id}:widget:{identity}"
+
+    @property
+    def widget(self) -> QLCWidget | None:
+        return self.coordinator.get_widget(self.identity)
+
+    @property
+    def name(self) -> str:
+        return self.widget.name if self.widget else self.identity
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.widget.value > 0 if self.widget else None
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_widget_value(self.identity, 255)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self.coordinator.async_set_widget_value(self.identity, 0)

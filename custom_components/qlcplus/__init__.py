@@ -27,6 +27,7 @@ from .const import (
     SERVICE_STOP_FUNCTION,
 )
 from .coordinator import QLCPlusCoordinator
+from .widget_coordinator import QLCPlusWidgetCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -37,18 +38,21 @@ class QLCPlusRuntime:
 
     client: QLCPlusClient
     coordinator: QLCPlusCoordinator
+    widget_coordinator: QLCPlusWidgetCoordinator
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up QLC+ from a config entry."""
     client = QLCPlusClient(entry.data[CONF_HOST], entry.data[CONF_PORT], entry.data[CONF_SSL])
     coordinator = QLCPlusCoordinator(hass, client, entry)
+    widget_coordinator = QLCPlusWidgetCoordinator(hass, client, entry)
     try:
         await coordinator.async_config_entry_first_refresh()
+        await widget_coordinator.async_config_entry_first_refresh()
     except Exception:
         await client.async_disconnect()
         raise
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = QLCPlusRuntime(client, coordinator)
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = QLCPlusRuntime(client, coordinator, widget_coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     _async_register_services(hass)

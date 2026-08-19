@@ -25,9 +25,16 @@ class FakeConfigEntry:
 ENTRY = FakeConfigEntry()
 
 
+class ClientWithEvents:
+    """Minimal event-registration contract used by coordinator test clients."""
+
+    def set_function_event_handler(self, handler) -> None:
+        self.function_event_handler = handler
+
+
 @pytest.mark.asyncio
 async def test_changed_numeric_id_preserves_identity(tmp_path) -> None:
-    class Client:
+    class Client(ClientWithEvents):
         calls = 0
 
         async def async_get_functions(self, status_filter):
@@ -43,7 +50,7 @@ async def test_changed_numeric_id_preserves_identity(tmp_path) -> None:
 
 @pytest.mark.asyncio
 async def test_connection_failure_becomes_update_failed(tmp_path) -> None:
-    class Client:
+    class Client(ClientWithEvents):
         async def async_get_functions(self, status_filter):
             raise QLCPlusConnectionError("offline")
 
@@ -56,7 +63,7 @@ async def test_connection_failure_becomes_update_failed(tmp_path) -> None:
 async def test_command_updates_only_the_affected_function_immediately(tmp_path) -> None:
     function = QLCFunction(12, "House Red", "Scene", False)
 
-    class Client:
+    class Client(ClientWithEvents):
         commands: list[tuple[int, bool]] = []
 
         async def async_set_function_status(self, function_id, state):
@@ -76,7 +83,7 @@ async def test_command_updates_only_the_affected_function_immediately(tmp_path) 
 async def test_scan_preserves_recent_command_state_while_qlcplus_catches_up(tmp_path) -> None:
     function = QLCFunction(12, "House Red", "Scene", False)
 
-    class Client:
+    class Client(ClientWithEvents):
         async def async_get_functions(self, status_filter):
             return [QLCFunction(12, "House Red", "Scene", False)]
 
@@ -89,12 +96,28 @@ async def test_scan_preserves_recent_command_state_while_qlcplus_catches_up(tmp_
 
 
 @pytest.mark.asyncio
+async def test_function_event_updates_matching_entity_without_a_refresh(tmp_path) -> None:
+    function = QLCFunction(12, "House Red", "Scene", False)
+
+    class Client(ClientWithEvents):
+        pass
+
+    client = Client()
+    coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), client, ENTRY)
+    coordinator.async_set_updated_data({function.identity: function})
+
+    await client.function_event_handler(12, True)
+
+    assert coordinator.get_function(function.identity).running is True
+
+
+@pytest.mark.asyncio
 async def test_full_scan_started_before_command_is_discarded(tmp_path) -> None:
     started = asyncio.Event()
     release = asyncio.Event()
     current = QLCFunction(12, "House Red", "Scene", True)
 
-    class Client:
+    class Client(ClientWithEvents):
         async def async_get_functions(self, status_filter):
             started.set()
             await release.wait()

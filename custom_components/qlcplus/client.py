@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 import logging
 from typing import Final
@@ -12,7 +12,7 @@ from typing import Final
 import aiohttp
 
 from .const import API_PREFIX, WEBSOCKET_PATH
-from .models import QLCFunction
+from .models import QLCFunction, QLCWidget
 
 _LOGGER = logging.getLogger(__name__)
 _TIMEOUT: Final = 10
@@ -44,6 +44,10 @@ class QLCPlusClient:
         self._session: aiohttp.ClientSession | None = None
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._lock = asyncio.Lock()
+        self._reader_task: asyncio.Task[None] | None = None
+        self._reply_waiter: tuple[str, asyncio.Future[list[str]]] | None = None
+        self._function_event_handler: Callable[[int, bool], Awaitable[None]] | None = None
+        self._widget_event_handler: Callable[[int, str, int], Awaitable[None]] | None = None
         self.last_error: str | None = None
 
     @property
@@ -61,6 +65,14 @@ class QLCPlusClient:
         scheme = "https" if self.use_ssl else "http"
         return f"{scheme}://{self.host}:{self.port}"
 
+    def set_function_event_handler(self, handler: Callable[[int, bool], Awaitable[None]]) -> None:
+        """Register the recipient for QLC+ FUNCTION start/stop push events."""
+        self._function_event_handler = handler
+
+    def set_widget_event_handler(self, handler: Callable[[int, str, int], Awaitable[None]]) -> None:
+        """Register the recipient for Virtual Console widget push events."""
+        self._widget_event_handler = handler
+
     async def async_connect(self) -> None:
         """Open the WebSocket if it is not already open."""
         if self.connected:
@@ -76,6 +88,7 @@ class QLCPlusClient:
                 heartbeat=30,
                 timeout=aiohttp.ClientWSTimeout(ws_receive=_TIMEOUT, ws_close=_TIMEOUT),
             )
+            self._start_reader()
             self.last_error = None
             _LOGGER.debug("Connected to QLC+ WebSocket at %s", self.url)
         except (aiohttp.ClientError, asyncio.TimeoutError, TypeError) as err:
@@ -85,6 +98,19 @@ class QLCPlusClient:
 
     async def async_disconnect(self) -> None:
         """Close resources. Safe to call repeatedly."""
+        reader_task = self._reader_task
+        self._reader_task = None
+        if reader_task is not None and reader_task is not asyncio.current_task():
+            reader_task.cancel()
+            try:
+                await reader_task
+            except asyncio.CancelledError:
+                pass
+        if self._reply_waiter is not None:
+            _, waiter = self._reply_waiter
+            if not waiter.done():
+                waiter.set_exception(QLCPlusConnectionError("QLC+ WebSocket disconnected"))
+            self._reply_waiter = None
         if self._ws is not None:
             try:
                 await self._ws.close()
@@ -95,45 +121,71 @@ class QLCPlusClient:
             await self._session.close()
         self._session = None
 
+    def _start_reader(self) -> None:
+        """Ensure one task owns all WebSocket reads and processes push events."""
+        if self._reader_task is None or self._reader_task.done():
+            self._reader_task = asyncio.create_task(self._async_reader(), name="qlcplus_websocket_reader")
+
+    async def _async_reader(self) -> None:
+        """Dispatch WebSocket replies and FUNCTION state events."""
+        assert self._ws is not None
+        try:
+            while True:
+                message = await self._ws.receive()
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    break
+                fields = message.data.split("|")
+                if len(fields) == 3 and fields[0] == "FUNCTION" and fields[2] in {"Running", "Stopped"}:
+                    try:
+                        function_id = int(fields[1])
+                    except ValueError:
+                        _LOGGER.debug("Ignoring QLC+ FUNCTION event with invalid ID: %s", message.data)
+                        continue
+                    if self._function_event_handler is not None:
+                        await self._function_event_handler(function_id, fields[2] == "Running")
+                    continue
+                if len(fields) == 3 and fields[0].isdigit() and fields[1] in {"BUTTON", "SLIDER", "AUDIO_TRIGGERS"}:
+                    if self._widget_event_handler is not None:
+                        await self._widget_event_handler(int(fields[0]), fields[1], int(fields[2]))
+                    continue
+                waiter = self._reply_waiter
+                if waiter is not None and len(fields) >= 2 and fields[:2] == [API_PREFIX, waiter[0]]:
+                    if not waiter[1].done():
+                        waiter[1].set_result(fields)
+                    continue
+                _LOGGER.debug("Ignoring unmatched QLC+ WebSocket message: %s", message.data)
+        except (aiohttp.ClientError, asyncio.CancelledError) as err:
+            if not isinstance(err, asyncio.CancelledError):
+                self.last_error = str(err)
+                _LOGGER.debug("QLC+ WebSocket reader stopped: %s", err)
+            raise
+        finally:
+            if self._reply_waiter is not None:
+                _, waiter = self._reply_waiter
+                if not waiter.done():
+                    waiter.set_exception(QLCPlusConnectionError("QLC+ WebSocket reader stopped"))
+
     async def _async_query(self, command: str, *args: str) -> list[str]:
         """Send a query and return its result fields."""
         async with self._lock:
             await self.async_connect()
             assert self._ws is not None
+            self._start_reader()
             payload = "|".join((API_PREFIX, command, *args))
             _LOGGER.debug("QLC+ query: %s", payload)
+            waiter: asyncio.Future[list[str]] = asyncio.get_running_loop().create_future()
+            self._reply_waiter = (command, waiter)
             try:
                 await self._ws.send_str(payload)
-                fields = await self._async_receive_reply(command)
+                fields = await asyncio.wait_for(waiter, _TIMEOUT)
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 self.last_error = str(err)
                 await self.async_disconnect()
                 raise QLCPlusConnectionError(f"QLC+ query {command} failed: {err}") from err
+            finally:
+                if self._reply_waiter is not None and self._reply_waiter[1] is waiter:
+                    self._reply_waiter = None
             return fields[2:]
-
-    async def _async_receive_reply(self, command: str) -> list[str]:
-        """Read through unsolicited QLC+ events until a matching API reply arrives."""
-        assert self._ws is not None
-        deadline = asyncio.get_running_loop().time() + _TIMEOUT
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                raise asyncio.TimeoutError
-            message = await self._ws.receive(timeout=remaining)
-            if message.type != aiohttp.WSMsgType.TEXT:
-                await self.async_disconnect()
-                raise QLCPlusConnectionError(f"QLC+ WebSocket closed during {command}")
-            fields = message.data.split("|")
-            if len(fields) >= 2 and fields[0] == API_PREFIX and fields[1] == command:
-                _LOGGER.debug("QLC+ reply: %s", message.data)
-                return fields
-            # QLC+ 4 pushes messages such as FUNCTION|<id>|Running on the same
-            # socket as API replies. They are authoritative only after a later
-            # coordinator refresh, but must never consume an in-flight reply.
-            if fields and fields[0] != API_PREFIX:
-                _LOGGER.debug("Ignoring unsolicited QLC+ event while waiting for %s: %s", command, message.data)
-                continue
-            raise QLCPlusProtocolError(f"Unexpected QLC+ reply to {command}: {message.data!r}")
 
     async def _async_command(self, command: str, *args: str) -> None:
         """Send a command that QLC+ 4 intentionally does not acknowledge."""
@@ -148,6 +200,18 @@ class QLCPlusClient:
                 self.last_error = str(err)
                 await self.async_disconnect()
                 raise QLCPlusConnectionError(f"QLC+ command {command} failed: {err}") from err
+
+    async def _async_direct_command(self, *parts: str) -> None:
+        """Send QLC+'s low-overhead direct Virtual Console command."""
+        async with self._lock:
+            await self.async_connect()
+            assert self._ws is not None
+            try:
+                await self._ws.send_str("|".join(parts))
+            except aiohttp.ClientError as err:
+                self.last_error = str(err)
+                await self.async_disconnect()
+                raise QLCPlusConnectionError(f"QLC+ direct command failed: {err}") from err
 
     async def async_get_functions(
         self, status_filter: Callable[[QLCFunction], bool] | None = None
@@ -186,6 +250,31 @@ class QLCPlusClient:
         if not result or result[0] not in {"Running", "Stopped"}:
             raise QLCPlusProtocolError(f"Unknown function status for {function_id}: {result!r}")
         return result[0] == "Running"
+
+    async def async_get_widgets(self) -> list[QLCWidget]:
+        """Fetch Virtual Console widgets and their current values."""
+        raw = await self._async_query("getWidgetsList")
+        if len(raw) % 2:
+            raise QLCPlusProtocolError("getWidgetsList reply has an odd number of fields")
+        widgets = []
+        for widget_id, name in zip(raw[::2], raw[1::2], strict=True):
+            try:
+                numeric_id = int(widget_id)
+            except ValueError as err:
+                raise QLCPlusProtocolError(f"Invalid widget ID: {widget_id!r}") from err
+            widget_type_reply = await self._async_query("getWidgetType", str(numeric_id))
+            widget_type = widget_type_reply[-1] if widget_type_reply else "Unknown"
+            status = await self._async_query("getWidgetStatus", str(numeric_id))
+            try:
+                value = int(status[-1]) if status and status[-1].isdigit() else 0
+            except ValueError:
+                value = 0
+            widgets.append(QLCWidget(numeric_id, name, widget_type, value))
+        return widgets
+
+    async def async_set_widget_value(self, widget_id: int, value: int) -> None:
+        """Control a VC Button, Slider, or Audio Trigger via the high-rate API."""
+        await self._async_direct_command(str(widget_id), str(value))
 
     async def async_set_function_status(self, function_id: int, state: bool) -> None:
         """Start or stop a Function."""
