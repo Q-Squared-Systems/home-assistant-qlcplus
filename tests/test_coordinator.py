@@ -62,10 +62,6 @@ async def test_command_updates_only_the_affected_function_immediately(tmp_path) 
         async def async_set_function_status(self, function_id, state):
             self.commands.append((function_id, state))
 
-        async def async_get_function_status(self, function_id):
-            assert function_id == 12
-            return True
-
     client = Client()
     coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), client, ENTRY)
     coordinator.async_set_updated_data({function.identity: function})
@@ -74,6 +70,22 @@ async def test_command_updates_only_the_affected_function_immediately(tmp_path) 
 
     assert client.commands == [(12, True)]
     assert coordinator.get_function(function.identity).running is True
+
+
+@pytest.mark.asyncio
+async def test_scan_preserves_recent_command_state_while_qlcplus_catches_up(tmp_path) -> None:
+    function = QLCFunction(12, "House Red", "Scene", False)
+
+    class Client:
+        async def async_get_functions(self, status_filter):
+            return [QLCFunction(12, "House Red", "Scene", False)]
+
+    coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), Client(), ENTRY)
+    coordinator._pending_states[function.identity] = (True, float("inf"))
+
+    data = await coordinator._async_update_data()
+
+    assert data[function.identity].running is True
 
 
 @pytest.mark.asyncio

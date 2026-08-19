@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 import logging
+from time import monotonic
 
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
@@ -18,6 +19,7 @@ from .models import QLCFunction
 from .const import CONF_EXPOSED_FUNCTIONS, CONF_EXPOSED_TYPES, CONF_NAME_PREFIX
 
 _LOGGER = logging.getLogger(__name__)
+_COMMAND_STATE_GRACE_SECONDS = 5
 
 
 class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
@@ -39,6 +41,7 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         self._command_lock = asyncio.Lock()
         self._command_complete = asyncio.Event()
         self._command_complete.set()
+        self._pending_states: dict[str, tuple[bool, float]] = {}
 
     def _is_exposed(self, function: QLCFunction) -> bool:
         """Return whether this Function has a corresponding HA switch."""
@@ -65,10 +68,20 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         self.last_successful_communication = datetime.now().astimezone()
         if generation != self._state_generation:
             # A Function command was issued after this scan began. Its direct
-            # status confirmation is newer than this complete-but-stale scan.
+            # state update is newer than this complete-but-stale scan.
             _LOGGER.debug("Discarding stale QLC+ Function scan after a command")
             return self.data or {}
-        return {function.identity: function for function in functions}
+        data = {function.identity: function for function in functions}
+        now = monotonic()
+        for identity, (expected_state, expires_at) in tuple(self._pending_states.items()):
+            function = data.get(identity)
+            if function is None or function.running == expected_state or now >= expires_at:
+                self._pending_states.pop(identity, None)
+            else:
+                # QLC+ can activate a Function before getFunctionStatus reports
+                # the new state. Preserve the just-issued command briefly.
+                data[identity] = replace(function, running=expected_state)
+        return data
 
     def async_set_updated_data(self, data: dict[str, QLCFunction]) -> None:
         """Publish data before asking platforms to create newly discovered entities."""
@@ -87,7 +100,7 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         return (self.data or {}).get(identity)
 
     async def async_set_function_state(self, identity: str, state: bool) -> None:
-        """Command one Function and immediately reconcile its authoritative state."""
+        """Command one Function and immediately update its Home Assistant state."""
         async with self._command_lock:
             function = self.get_function(identity)
             if function is None:
@@ -100,9 +113,9 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
             self._state_generation += 1
             try:
                 await self.client.async_set_function_status(function.function_id, state)
-                running = await self.client.async_get_function_status(function.function_id)
                 data = dict(self.data or {})
-                data[identity] = replace(function, running=running)
+                data[identity] = replace(function, running=state)
+                self._pending_states[identity] = (state, monotonic() + _COMMAND_STATE_GRACE_SECONDS)
                 self.last_successful_communication = datetime.now().astimezone()
                 self.async_set_updated_data(data)
             finally:
