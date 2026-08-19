@@ -1,0 +1,44 @@
+start_function:
+  name: Start function
+  description: Start a QLC+ Function by name.
+  fields:
+    function:
+      required: true
+      selector:
+        text:
+    entry_id:
+      selector:
+        text:
+stop_function:
+  name: Stop function
+  description: Stop a QLC+ Function by name.
+  fields:
+    function:
+      required: true
+      selector:
+        text:
+    entry_id:
+      selector:
+        text:
+set_function_state:
+  name: Set function state
+  description: Start or stop a QLC+ Function by name.
+  fields:
+    function:
+      required: true
+      selector:
+        text:
+    state:
+      required: true
+      selector:
+        boolean:
+    entry_id:
+      selector:
+        text:
+refresh_functions:
+  name: Refresh functions
+  description: Rediscover QLC+ Functions and refresh their states.
+  fields:
+    entry_id:
+      selector:
+        text:
