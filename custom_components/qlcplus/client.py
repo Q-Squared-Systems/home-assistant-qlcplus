@@ -102,19 +102,36 @@ class QLCPlusClient:
             _LOGGER.debug("QLC+ query: %s", payload)
             try:
                 await self._ws.send_str(payload)
-                message = await self._ws.receive(timeout=_TIMEOUT)
+                fields = await self._async_receive_reply(command)
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 self.last_error = str(err)
                 await self.async_disconnect()
                 raise QLCPlusConnectionError(f"QLC+ query {command} failed: {err}") from err
+            return fields[2:]
+
+    async def _async_receive_reply(self, command: str) -> list[str]:
+        """Read through unsolicited QLC+ events until a matching API reply arrives."""
+        assert self._ws is not None
+        deadline = asyncio.get_running_loop().time() + _TIMEOUT
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError
+            message = await self._ws.receive(timeout=remaining)
             if message.type != aiohttp.WSMsgType.TEXT:
                 await self.async_disconnect()
                 raise QLCPlusConnectionError(f"QLC+ WebSocket closed during {command}")
             fields = message.data.split("|")
-            if len(fields) < 2 or fields[0] != API_PREFIX or fields[1] != command:
-                raise QLCPlusProtocolError(f"Unexpected QLC+ reply to {command}: {message.data!r}")
-            _LOGGER.debug("QLC+ reply: %s", message.data)
-            return fields[2:]
+            if len(fields) >= 2 and fields[0] == API_PREFIX and fields[1] == command:
+                _LOGGER.debug("QLC+ reply: %s", message.data)
+                return fields
+            # QLC+ 4 pushes messages such as FUNCTION|<id>|Running on the same
+            # socket as API replies. They are authoritative only after a later
+            # coordinator refresh, but must never consume an in-flight reply.
+            if fields and fields[0] != API_PREFIX:
+                _LOGGER.debug("Ignoring unsolicited QLC+ event while waiting for %s: %s", command, message.data)
+                continue
+            raise QLCPlusProtocolError(f"Unexpected QLC+ reply to {command}: {message.data!r}")
 
     async def _async_command(self, command: str, *args: str) -> None:
         """Send a command that QLC+ 4 intentionally does not acknowledge."""

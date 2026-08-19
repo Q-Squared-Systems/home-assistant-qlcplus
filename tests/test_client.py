@@ -68,3 +68,29 @@ def test_url_normalizes_a_home_assistant_number_selector_float() -> None:
     client = QLCPlusClient("qlc.local", 9999.0, False)
     assert client.url == "ws://qlc.local:9999/qlcplusWS"
     assert client.web_url == "http://qlc.local:9999"
+
+
+@pytest.mark.asyncio
+async def test_query_skips_unsolicited_function_event(monkeypatch) -> None:
+    client = QLCPlusClient("qlc.local", 9999, False)
+
+    class FakeWebSocket:
+        closed = False
+
+        async def send_str(self, payload):
+            assert payload == "QLC+API|getFunctionsList"
+
+        async def receive(self, timeout):
+            return replies.pop(0)
+
+    replies = [
+        aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, "FUNCTION|0|Running", ""),
+        aiohttp.WSMessage(aiohttp.WSMsgType.TEXT, "QLC+API|getFunctionsList|0|House Red", ""),
+    ]
+    client._ws = FakeWebSocket()
+
+    async def connect():
+        return None
+
+    monkeypatch.setattr(client, "async_connect", connect)
+    assert await client._async_query("getFunctionsList") == ["0", "House Red"]
