@@ -9,6 +9,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -30,16 +31,60 @@ def _is_exposed(entry: ConfigEntry, function: QLCFunction) -> bool:
     return function.identity in selected or function.function_type in types or (bool(prefix) and function.name.casefold().startswith(prefix))
 
 
+def _has_active_filter(entry: ConfigEntry) -> bool:
+    """Return whether entity selection has been explicitly restricted."""
+    options = entry.options
+    return bool(
+        options.get(CONF_EXPOSED_FUNCTIONS)
+        or options.get(CONF_EXPOSED_TYPES)
+        or options.get(CONF_NAME_PREFIX, "").strip()
+    )
+
+
+async def _async_cleanup_filtered_entities(
+    hass: HomeAssistant, entry: ConfigEntry, exposed_identities: set[str]
+) -> None:
+    """Remove previously-created Function switches excluded by active filters.
+
+    This intentionally runs only after the user enables a filter. Leaving all
+    filters empty means "expose everything" and never removes registry entries.
+    """
+    if not _has_active_filter(entry):
+        return
+    registry = er.async_get(hass)
+    prefix = f"{entry.unique_id}:"
+    removed = 0
+    for registry_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if not registry_entry.entity_id.startswith("switch.") or not registry_entry.unique_id.startswith(prefix):
+            continue
+        identity = registry_entry.unique_id.removeprefix(prefix)
+        if identity in exposed_identities:
+            continue
+        registry.async_remove(registry_entry.entity_id)
+        removed += 1
+    if removed:
+        _LOGGER.info("Removed %d QLC+ switch entities excluded by updated filters", removed)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     """Set up Function switches and dynamically add newly discovered Functions."""
     coordinator: QLCPlusCoordinator = hass.data[DOMAIN][entry.entry_id].coordinator
     added: set[str] = set()
+
+    functions = coordinator.data or {}
+    exposed_identities = {identity for identity, function in functions.items() if _is_exposed(entry, function)}
+    await _async_cleanup_filtered_entities(hass, entry, exposed_identities)
+    if exposed_identities:
+        _LOGGER.info("Setting up %d QLC+ Function switch entities", len(exposed_identities))
+    else:
+        _LOGGER.warning("No QLC+ Functions match the configured entity filters")
 
     def add_new() -> None:
         functions = coordinator.data or {}
         entities = [QLCPlusFunctionSwitch(coordinator, entry, identity) for identity, function in functions.items() if identity not in added and _is_exposed(entry, function)]
         added.update(entity.identity for entity in entities)
         if entities:
+            _LOGGER.debug("Adding %d newly discovered QLC+ Function switches", len(entities))
             async_add_entities(entities)
 
     add_new()

@@ -1,6 +1,7 @@
 """Unit tests for durable Function identity and duplicate handling."""
 
 from custom_components.qlcplus.models import QLCFunction, normalize
+from custom_components.qlcplus.switch import _has_active_filter, _is_exposed
 
 
 def test_normalize_is_case_and_whitespace_insensitive() -> None:
@@ -17,3 +18,13 @@ def test_duplicate_functions_have_deterministic_distinct_identities() -> None:
     first = QLCFunction(1, "Flash", "Scene", False, 1)
     second = QLCFunction(2, "Flash", "Scene", False, 2)
     assert first.identity != second.identity
+
+
+def test_prefix_filter_limits_exposure() -> None:
+    function = QLCFunction(1, "HA_House Red", "Scene", False)
+
+    class Entry:
+        options = {"name_prefix": "HA_"}
+
+    assert _has_active_filter(Entry())
+    assert _is_exposed(Entry(), function)
