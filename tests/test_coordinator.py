@@ -1,5 +1,7 @@
 """Coordinator behavior tests; QLC+ hardware is never required."""
 
+import asyncio
+
 import pytest
 
 from homeassistant.core import HomeAssistant
@@ -47,3 +49,49 @@ async def test_connection_failure_becomes_update_failed(tmp_path) -> None:
     coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), Client(), ENTRY)
     with pytest.raises(UpdateFailed, match="offline"):
         await coordinator._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_command_updates_only_the_affected_function_immediately(tmp_path) -> None:
+    function = QLCFunction(12, "House Red", "Scene", False)
+
+    class Client:
+        commands: list[tuple[int, bool]] = []
+
+        async def async_set_function_status(self, function_id, state):
+            self.commands.append((function_id, state))
+
+        async def async_get_function_status(self, function_id):
+            assert function_id == 12
+            return True
+
+    client = Client()
+    coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), client, ENTRY)
+    coordinator.async_set_updated_data({function.identity: function})
+
+    await coordinator.async_set_function_state(function.identity, True)
+
+    assert client.commands == [(12, True)]
+    assert coordinator.get_function(function.identity).running is True
+
+
+@pytest.mark.asyncio
+async def test_full_scan_started_before_command_is_discarded(tmp_path) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    current = QLCFunction(12, "House Red", "Scene", True)
+
+    class Client:
+        async def async_get_functions(self):
+            started.set()
+            await release.wait()
+            return [QLCFunction(12, "House Red", "Scene", False)]
+
+    coordinator = QLCPlusCoordinator(HomeAssistant(str(tmp_path)), Client(), ENTRY)
+    coordinator.async_set_updated_data({current.identity: current})
+    scan = asyncio.create_task(coordinator._async_update_data())
+    await started.wait()
+    coordinator._state_generation += 1
+    release.set()
+
+    assert await scan == {current.identity: current}

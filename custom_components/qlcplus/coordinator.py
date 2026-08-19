@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 import logging
 
@@ -32,13 +34,25 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         self.client = client
         self.last_successful_communication: datetime | None = None
         self._discovery_listeners: list[Callable[[], None]] = []
+        self._state_generation = 0
+        self._command_lock = asyncio.Lock()
+        self._command_complete = asyncio.Event()
+        self._command_complete.set()
 
     async def _async_update_data(self) -> dict[str, QLCFunction]:
+        """Read a full QLC+ snapshot without overwriting a newer command state."""
+        await self._command_complete.wait()
+        generation = self._state_generation
         try:
             functions = await self.client.async_get_functions()
         except QLCPlusError as err:
             raise UpdateFailed(str(err)) from err
         self.last_successful_communication = datetime.now().astimezone()
+        if generation != self._state_generation:
+            # A Function command was issued after this scan began. Its direct
+            # status confirmation is newer than this complete-but-stale scan.
+            _LOGGER.debug("Discarding stale QLC+ Function scan after a command")
+            return self.data or {}
         return {function.identity: function for function in functions}
 
     def async_set_updated_data(self, data: dict[str, QLCFunction]) -> None:
@@ -58,10 +72,23 @@ class QLCPlusCoordinator(DataUpdateCoordinator[dict[str, QLCFunction]]):
         return (self.data or {}).get(identity)
 
     async def async_set_function_state(self, identity: str, state: bool) -> None:
-        """Resolve the latest numeric ID, command it, then confirm via refresh."""
-        function = self.get_function(identity)
-        if function is None:
-            raise ValueError("Function no longer exists in the QLC+ project")
-        await self.client.async_set_function_status(function.function_id, state)
-        # The command has no response in QLC+ 4, so read back authoritative state.
-        await self.async_request_refresh()
+        """Command one Function and immediately reconcile its authoritative state."""
+        async with self._command_lock:
+            function = self.get_function(identity)
+            if function is None:
+                raise ValueError("Function no longer exists in the QLC+ project")
+
+            # Full scans query hundreds of Functions over time. Mark any scan
+            # already running as stale and keep new scans out until the command
+            # has been sent and this Function's state has been read back.
+            self._command_complete.clear()
+            self._state_generation += 1
+            try:
+                await self.client.async_set_function_status(function.function_id, state)
+                running = await self.client.async_get_function_status(function.function_id)
+                data = dict(self.data or {})
+                data[identity] = replace(function, running=running)
+                self.last_successful_communication = datetime.now().astimezone()
+                self.async_set_updated_data(data)
+            finally:
+                self._command_complete.set()
